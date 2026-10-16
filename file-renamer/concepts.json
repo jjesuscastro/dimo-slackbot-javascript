@@ -1,0 +1,169 @@
+{
+  "concepts": {
+    "ai": {
+      "description": "Video created by AI, with little manual editing or human intervention",
+      "children": {
+        "aimusic": "Multiple b-roll scenes with an AI voiceover that sings your product's story. video example",
+        "reviews": "Showcases customer ratings, testimonials in UGC or reaction style",
+        "prompt": "Different characters answering the same question prompt on screen about the product - Video Example",
+        "povwalktalk": "Walk-and-talk POV style videos set in multiple locations - video example",
+        "painpoint": "Introducing the product that focuses on the pain point and solutions. video example",
+        "beforeafter": "Before-and-after journey that shows results from using the product. video example",
+        "cameraroll": "Multiple b-roll scenes set to music, no voiceover, with a camera roll hook - video example",
+        "aesthetic": "Aesthetic lifestyle b-rolls for product showcase & tryons. video example",
+        "lookbook": "A single model showcases one outfit across different locations, creating a \"one look, many vibes\" fashion lookbook. video example",
+        "tedtalk": "A keynote-style talking head paired with supporting b-roll clips about your product - video example",
+        "interview": "street interview, podcast style interview (2 Person Podcast, Animal Interview), Conference Style Interview, Multi Conversations, TV shows",
+        "newsroom": "\"Breaking News\" hook with street interviews to promote the product. video example",
+        "display": "Focus on the sequential presentation of product details, without featuring any human faces",
+        "tryon": "Content showcasing models presenting apparel or products through product displays, vlog-style, or lifestyle formats, with an emphasis on highlighting product details. Mirror Tryon, Unboxing Tryon,",
+        "overlay": "Videos contains overlay/frame design to include feature callouts, a product cutout, and a branded CTA etc. examples: Split Screen Try-On , Multi-Outfit Styling Reel",
+        "splitscreen": "A top-and-bottom, left-and-right split-screen showcasing the product in use and in detail. Look & Detail Split Screen",
+        "recommend": "Showcasing friend recommendations to build trust and credibility. Friends Recommendation",
+        "closeup": "A product close-up visuals with real-life use cases and condition-based callouts. Condition Callout",
+        "story": "Story-driven content/experience of using the product."
+      }
+    },
+    "game": {
+      "description": "User interacts with a game mechanic before reaching the CTA",
+      "children": {
+        "rollingdice": "users tap to stop the dice on and reveal a discount",
+        "colorgrid": "User launches colored balls to match the correct target, progressing through a simple aim-and-match challenge",
+        "memorycard": "User flips cards to find matching pairs",
+        "bowling": "User swipes to bowl and knock down products",
+        "platformer": "User taps to jump over obstacles in an endless runner while progressing toward the featured product",
+        "clearblock": "places puzzle pieces to clear rows or columns",
+        "jigsaw": "Jigsaw puzzle",
+        "hiddenobject": "User needs to find hidden objects",
+        "bet1": "The user is offered to place bets to get a reward. Side by side bet",
+        "bet2": "The user is offered bets to get a reward. Grid-style lineup selection",
+        "catalog": "Catalogue-style MIP where users swipe to explore and play multiple content pieces, especially for drama apps",
+        "chatbot": "Chat-style mips that mimics a messaging interface with typed or tap-to-select responses",
+        "walkthrough": "Step-by-step MIP showcase of an app’s core features and functionality",
+        "reader": "Text-based, reader-style MIP focused on narrative or informational content",
+        "beforeafter": "User swipes to reveal a side-by-side product transformation",
+        "carnivalduck": "User taps to shoot ducks, uncovering product benefits with each hit",
+        "conveyorbelt": "Products move along a conveyor belt for the user to sort",
+        "findmatch": "User flips tiles to match pairs, revealing the product as the reward",
+        "ninjaslash": "User slashes through objects to uncover the featured product",
+        "recipeformula": "Ingredient icons combine in a visual equation to reveal the product",
+        "slider": "User drags a slider to compare a before-and-after product result",
+        "vendingmachine": "User selects sort the products in a vending machine",
+        "plinko": "User drops a chip down and watch it bounce into a reward slot",
+        "whacamole": "User use a mallet to hit products back to their holes",
+        "swipe": "Tinder-like mechanic to like/dislike product",
+        "spintocatch": "The user needs to \"catch\" a moving object in the right position to get a reward",
+        "catch": "The user needs to catch falling objects to get a reward",
+        "spaceshooter": "User use a space/tool to shoot products for rewards",
+        "flappybird": "Fast-paced tap-to-fly arcade game where players dodge obstacles to score items",
+        "match3": "Match tiles, pairs, or icons",
+        "bubbles": "Tap or shoot to pop bubbles",
+        "sort": "Sort identical products across different categories, or organize the same product by color into separate boxes, cabinets, vending machines, and more.",
+        "spinwheel": "Spin the wheel to reveal a product, a special sale, or another surprise message",
+        "bingo": "Bingo mechanics to reveal a product, a special sale, or another surprise or winning message",
+        "box": "Select from multiple hidden boxes or options to reveal a surprise - similar to an unboxing experience, mystery box, popping a balloon, or opening a gift box",
+        "scratch": "Scratch-off to uncover content beneath",
+        "merge": "Combine items together",
+        "drag": "Drag-and-drop items to reach a target",
+        "slots": "Slot machine",
+        "claw": "Claw machine",
+        "runner": "User need to swipe left-right to collect items",
+        "word": "Spell/Connect letters to make a word related to the products",
+        "puzzle": "Jigsaw, puzzle, hidden objects",
+        "ingredients": "Pick and drag product ingredients to build the product itself"
+      }
+    },
+    "motion": {
+      "description": "Video created and edited by humans, incorporating animation, existing static assets, and video footage",
+      "children": {
+        "static": "static converted video, with/without animation and music, usually 15s long",
+        "mashup": "longer-form video combining multiple statics and/or video clips with animation, transitions, text, logo, and music for a more comprehensive product showcase, usually 45s - 60s",
+        "edit": "adding subtitles, disclaimers, or banners to existing video assets",
+        "receipt": "Animated receipt layout that reveals discounts, free items and savings - video example"
+      }
+    },
+    "product": {
+      "description": "Static or lightly interactive presentation focused on communicating product value",
+      "children": {
+        "infographic": "Text-driven layout showcasing product features, benefits, or customer stats — no product imagery as hero",
+        "carousel": "Animation scrolls through a sequence of product cards or content panels.",
+        "grid": "Animation with panels, usually 3x3, 2x2 to show product",
+        "stream": "Products align in rows or columns with a stream/falling sequential animation",
+        "rotate": "Products align as a circle in a 360 rotating animation",
+        "text": "Copy-focused card — no product images, typically headline + value prop + CTA, such as iphone notes, white board, email templates",
+        "card": "Single product hero image with tagline/price; no extended detail, with or without light animation",
+        "landing": "Scrollable mini-landing-page experience with multiple sections",
+        "reviews": "Showcases customer ratings, testimonials, or UGC",
+        "beforeafter": "Side-by-side or slider comparing before/after states",
+        "pop": "Products remain fixed in position while rapidly switching colors or designs with a popping animation effect",
+        "video": "Embedded video clip as the primary showcase element",
+        "billboard": "Product is showcased as a large outdoor advertisement display",
+        "localize": "localizations for mip, sip, gif, and video creatives",
+        "receipt": "receipt layout that reveals discounts, free items and savings",
+        "stickynote": "Key message is handwritten and delivered via an animated sticky note",
+        "notes": "Text-heavy layout mimicking the iPhone Notes app",
+        "checkoutcart": "Checkout cart layout that reveals discounts, free items, and savings",
+        "falling": "Products align in columns with a falling sequential animation",
+        "whiteboard": "Copy-focused card mimicking a whiteboard, with information and product images",
+        "float": "Product hero image with tagline and price; no extended detail, with or without light animation"
+      }
+    },
+    "quiz": {
+      "description": "User answers questions",
+      "children": {
+        "survey": "Multi-question preference input that feeds a recommendation"
+      }
+    },
+    "ugc": {
+      "description": "Live-action videos featuring real people and products",
+      "children": {
+        "reviews": "Showcases customer ratings, testimonials in UGC or reaction style",
+        "interview": "street interview, podcast style interview, TV shows",
+        "tryon": "Content showcasing models presenting apparel or products through product displays, vlog-style, or lifestyle formats, with an emphasis on highlighting product details.",
+        "story": "Story-driven content highlighting a detailed transformational journey before and after using the product.",
+        "edit": "adding subtitles, disclaimers, or banners to existing video assets"
+      }
+    }
+  },
+  "concept3": {
+    "ai": "completely done by AI",
+    "human": "completely done by human",
+    "aiassisted": "Partially completed by human with AI assistance"
+  },
+  "subconcept": {
+    "dd": "dynamic device: content changes based on the user's device (e.g. showing ios android or device type: iphone, Google Pixel, Samsung, Xiaomi)",
+    "dt": "dynamic time: content changes based on the current date/time (e.g. displaying \"TODAY\" and the actual date XX/XX on user's device)",
+    "dh": "dynamic holiday: messaging switches during specific holiday periods and stays evergreen the rest of the time (e.g. a Labor Day or Black Friday sale message that only appears during the sale window)",
+    "dtd": "dynamic time & device: combines dt and dd",
+    "none": "no dynamic element - use this for all regular creatives (most common value)"
+  },
+  "theme": {
+    "newyear": "",
+    "chinesenewyear": "",
+    "valentinesday": "",
+    "stpatricksday": "",
+    "easter": "",
+    "aprilfoolsday": "",
+    "springbreak": "",
+    "spring": "",
+    "mothersday": "",
+    "memorialday": "",
+    "summer": "",
+    "fathersday": "",
+    "independenceday": "",
+    "primeday": "",
+    "backtoschool": "",
+    "laborday": "",
+    "fall": "",
+    "halloween": "",
+    "veteransday": "",
+    "thanksgiving": "",
+    "blackfriday": "",
+    "cybermonday": "",
+    "bfcm": "Black Friday Cyber Monday",
+    "christmas": "",
+    "winter": "",
+    "none": "no holiday/promo",
+    "unique": "for brand's unique holiday/sale season that's not included in the above list"
+  }
+}

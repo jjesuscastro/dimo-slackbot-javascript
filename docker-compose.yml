@@ -1,0 +1,15 @@
+services:
+  dimo-plec-slack-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dimo-plec-slack-bot:latest
+    pull_policy: build
+    container_name: dimo-plec-slack-bot
+    restart: unless-stopped
+    environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:?Set SLACK_BOT_TOKEN in the Portainer stack environment}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:?Set SLACK_APP_TOKEN in the Portainer stack environment}
+      PLEC_UPLOAD_URL: ${PLEC_UPLOAD_URL:-http://167.99.227.249/src/upload_HTML_Experimental.php}
+      PLEC_ORIGIN_URL: ${PLEC_ORIGIN_URL:-http://167.99.227.249}
+      ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS:-}
