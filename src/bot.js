@@ -8,6 +8,7 @@ const SevenZip = require('7z-wasm');
 const { createExtractorFromData } = require('node-unrar-js');
 const { validateFilename } = require('./filename-validator');
 const { uploadDefault } = require('./plec');
+const { recordFiles, getStats, getCsvRows, toCsv, periodLabels } = require('./stats');
 
 const { SLACK_BOT_TOKEN, SLACK_APP_TOKEN } = process.env;
 if (!SLACK_BOT_TOKEN || !SLACK_APP_TOKEN) {
@@ -17,6 +18,94 @@ if (!SLACK_BOT_TOKEN || !SLACK_APP_TOKEN) {
 const allowedChannels = new Set((process.env.ALLOWED_CHANNEL_IDS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const app = new App({ token: SLACK_BOT_TOKEN, appToken: SLACK_APP_TOKEN, socketMode: true });
 const MAX_HTML_FILE_BYTES = 5 * 1024 * 1024;
+const PERIOD_ALIASES = new Map([
+  ['today', 'today'], ['day', 'today'], ['current-day', 'today'],
+  ['week', 'week'], ['current-week', 'week'],
+  ['month', 'month'], ['current-month', 'month'],
+  ['yesterday', 'yesterday'],
+  ['lastweek', 'lastweek'], ['last-week', 'lastweek'],
+  ['lastmonth', 'lastmonth'], ['last-month', 'lastmonth'],
+  ['all', 'all'], ['all-time', 'all'],
+]);
+const uploaderNameCache = new Map();
+
+async function getUploaderName(client, userId, message) {
+  const snapshot = message.user_profile?.display_name || message.user_profile?.real_name
+    || message.user_profile?.name;
+  if (snapshot) return snapshot;
+  if (!userId) return 'Unknown';
+  if (uploaderNameCache.has(userId)) return uploaderNameCache.get(userId);
+  try {
+    const result = await client.users.info({ user: userId });
+    const name = result.user?.profile?.display_name || result.user?.profile?.real_name || result.user?.name || userId;
+    uploaderNameCache.set(userId, name);
+    return name;
+  } catch {
+    return userId;
+  }
+}
+
+function parseStatsCommand(commandText = '') {
+  const words = commandText.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const csv = words.includes('csv');
+  const periods = words.filter((word) => word !== 'csv');
+  if (periods.length > 1) return null;
+  const periodWord = periods[0];
+  const period = periodWord ? PERIOD_ALIASES.get(periodWord) : 'all';
+  if (words.some((word) => word !== 'csv' && !PERIOD_ALIASES.has(word))) return null;
+  return { csv, period };
+}
+
+function formatStats(stats) {
+  const { totals, topUploaders } = stats;
+  const lines = [
+    `*Dimo statistics — ${stats.label} (Asia/Manila)*`,
+    `Files processed: ${totals.processed}`,
+    `Uploaded successfully: ${totals.uploaded}`,
+    `Naming issues: ${totals.naming_issues}`,
+    `Missing mraid.open: ${totals.missing_mraid_open}`,
+    `Contains window.open: ${totals.window_open_issues}`,
+    `Upload failures: ${totals.failures}`,
+  ];
+  if (topUploaders.length) {
+    lines.push('', '*Top uploaders*', ...topUploaders.map((user) =>
+      `• ${user.uploader_display_name} (<@${user.uploader_id}>): ${user.uploaded} uploaded / ${user.processed} processed`));
+  }
+  lines.push('', '_Issue counts can overlap. Files inside archives are counted individually._');
+  return lines.join('\n');
+}
+
+app.command('/stats', async ({ command, ack, respond, client, logger }) => {
+  await ack();
+  const options = parseStatsCommand(command.text);
+  if (!options) {
+    await respond({ response_type: 'ephemeral', text: 'Usage: `/stats [today|week|month|yesterday|lastweek|lastmonth|all] [csv]`' });
+    return;
+  }
+  try {
+    const stats = getStats(options.period);
+    if (options.csv) {
+      const csv = toCsv(getCsvRows(options.period));
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `dimo-stats-${options.period}-${date}.csv`;
+      const dm = await client.conversations.open({ users: command.user_id });
+      await client.files.uploadV2({
+        channel_id: dm.channel.id,
+        file: Buffer.from(csv, 'utf8'),
+        filename,
+        title: `Dimo statistics — ${periodLabels[options.period]}`,
+        initial_comment: `Private CSV export for ${stats.label}.`,
+      });
+    }
+    await respond({
+      response_type: 'ephemeral',
+      text: `${formatStats(stats)}${options.csv ? '\n\nI sent the CSV to you in a private message.' : ''}`,
+    });
+  } catch (error) {
+    logger.error('Could not generate statistics:', error);
+    await respond({ response_type: 'ephemeral', text: 'I could not generate the statistics right now.' });
+  }
+});
 
 async function downloadSlackFile(file, maxBytes = Infinity) {
   const url = file.url_private_download || file.url_private;
@@ -150,6 +239,8 @@ app.event('message', async ({ event, client, logger }) => {
   };
   const candidates = message.files.filter((file) => /\.(?:html?|zip|rar|7z)$/i.test(file.name || ''));
   if (!candidates.length) return;
+  const uploaderId = message.user || 'unknown';
+  const uploaderDisplayName = await getUploaderName(client, uploaderId, message);
   const htmlFiles = [];
 
   for (const file of candidates) {
@@ -180,14 +271,29 @@ app.event('message', async ({ event, client, logger }) => {
 
   const invalidFiles = [];
   const correctlyNamedFiles = [];
+  const records = [];
 
   for (const { filename, bytes } of htmlFiles) {
     const check = validateFilename(filename);
-    const errors = [...check.errors, ...validateHtmlContent(bytes)];
+    const contentErrors = validateHtmlContent(bytes);
+    const errors = [...check.errors, ...contentErrors];
+    records.push({
+      checked_at: new Date().toISOString(),
+      uploader_id: uploaderId,
+      uploader_display_name: uploaderDisplayName,
+      filename,
+      naming_ok: Number(check.valid),
+      has_mraid_open: Number(!contentErrors.includes('Must contain `mraid.open`.')),
+      has_window_open: Number(contentErrors.includes('Must not contain `window.open`.')),
+      uploaded: 0,
+      outcome: errors.length ? 'validation_failed' : 'pending_upload',
+      issue_details: errors.join('; '),
+    });
     if (errors.length) invalidFiles.push({ filename, errors });
     if (check.valid) correctlyNamedFiles.push(filename);
   }
   if (invalidFiles.length) {
+    recordFiles(records);
     const issueLines = invalidFiles.map(({ filename, errors }) =>
       `- \`${filename}\`:\n  - ${errors.join('\n  - ')}`,
     );
@@ -211,21 +317,31 @@ app.event('message', async ({ event, client, logger }) => {
 
   if (!validFiles.length) return;
   validFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  let link;
   try {
-    const link = await uploadDefault(validFiles);
-    await client.chat.postMessage({
-      channel: event.channel,
-      thread_ts,
-      text: addEditTimestamp(`<${link}|AppLovin>`),
-    });
+    link = await uploadDefault(validFiles);
   } catch (error) {
+    records.forEach((row) => {
+      row.outcome = 'failed';
+      row.issue_details = [row.issue_details, `PLEC upload failed: ${error.message}`].filter(Boolean).join('; ');
+    });
+    recordFiles(records);
     logger.error('PLEC batch upload failed:', error);
     await client.chat.postMessage({
       channel: event.channel,
       thread_ts,
       text: addEditTimestamp(`The ${validFiles.length} validated file${validFiles.length === 1 ? '' : 's'} could not be uploaded to PLEC: ${error.message}`),
     });
+    return;
   }
+
+  records.forEach((row) => { row.uploaded = 1; row.outcome = 'uploaded'; });
+  recordFiles(records);
+  await client.chat.postMessage({
+    channel: event.channel,
+    thread_ts,
+    text: addEditTimestamp(`<${link}|AppLovin>`),
+  });
 });
 
 (async () => {

@@ -13,3 +13,8 @@ services:
       PLEC_UPLOAD_URL: ${PLEC_UPLOAD_URL:-http://167.99.227.249/src/upload_HTML_Experimental.php}
       PLEC_ORIGIN_URL: ${PLEC_ORIGIN_URL:-http://167.99.227.249}
       ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS:-}
+    volumes:
+      - dimo-stats:/app/data
+
+volumes:
+  dimo-stats:

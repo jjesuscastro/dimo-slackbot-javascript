@@ -10,6 +10,26 @@ HTML and HTM files inside ZIP, RAR, and 7z archives are checked by filename and 
 
 When a user edits a message containing HTML or an archive, the bot reprocesses the edited message's current attachments and replies in that message's thread. Responses to edits include the edit timestamp, localized to each Slack reader's timezone. Only files still attached to the edited message are checked.
 
+## Statistics
+
+The bot stores one SQLite record for each extracted HTML/HTM file each time it is checked. Records include the check timestamp, uploader Slack ID and display-name snapshot, filename, naming/content check results, upload outcome, and issue details. File contents and message text are not stored. Reuploads and edited-message rechecks count as new processing attempts. SQLite data is kept in the `dimo-stats` Docker volume at `/app/data`; set `STATS_DB_PATH` to override the database location.
+
+Create a Slack slash command named `/stats` for this app. The command is available in Socket Mode. Usage:
+
+```text
+/stats                       # all recorded data
+/stats today                 # current day
+/stats week                  # Sunday through today
+/stats month                 # first of month through today
+/stats yesterday
+/stats lastweek              # previous Sunday through Saturday
+/stats lastmonth
+/stats all
+/stats csv [period]          # upload per-file CSV for the period (all time by default)
+```
+
+All date boundaries use Asia/Manila. The summary is ephemeral to the person running the command. A CSV export is sent in a private DM to that person. It contains one row per processing attempt, including uploader and individual naming/content/upload results. Add bot token scopes `users:read` (display-name lookup), `files:write` (CSV uploads), and `im:write` (open a private DM), plus the existing `chat:write`; retain the file-reading and history scopes needed by the bot. Reinstall the app after changing scopes.
+
 ## Run locally
 
 Requires Node.js 20 or newer.
@@ -46,7 +66,8 @@ For local container deployment, set the same variables in a local `.env` file (c
 Create a Slack app named **Dimo PLEC Slack Bot** for the workspace and configure:
 
 - **Socket Mode:** enabled; create an app-level token with `connections:write` and set it as `SLACK_APP_TOKEN`.
-- **Bot token scopes:** `chat:write`, `files:read`, and history scopes for the conversations you want it to watch (`channels:history`, `groups:history`, and/or `im:history`). Add the bot to the target channel.
+- **Bot token scopes:** `chat:write`, `files:read`, `files:write`, `users:read`, `im:write`, and history scopes for the conversations you want it to watch (`channels:history`, `groups:history`, and/or `im:history`). Add the bot to the target channel.
+- **Slash commands:** create `/stats` for the app. Socket Mode carries the command event; no public request URL is needed.
 - **Event subscriptions:** subscribe to the bot event `message.channels`; add `message.groups` or `message.im` if those conversation types are needed.
 - Install or reinstall the app after changing scopes, then set the generated bot token as `SLACK_BOT_TOKEN`.
 
