@@ -220,6 +220,16 @@ function validateHtmlContent(bytes) {
   return errors;
 }
 
+function addBirthdayMessage(text, date = new Date()) {
+  const manilaDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+  return manilaDate === '2026-10-21' ? `${text}\n\nHappy Birthday Marcus!` : text;
+}
+
 app.event('message', async ({ event, client, logger }) => {
   // Slack wraps an edited message in event.message and marks the outer event
   // as message_changed. Use the updated message so edits only reprocess that
@@ -340,7 +350,7 @@ app.event('message', async ({ event, client, logger }) => {
   await client.chat.postMessage({
     channel: event.channel,
     thread_ts,
-    text: addEditTimestamp(`<${link}|AppLovin>`),
+    text: addEditTimestamp(addBirthdayMessage(`<${link}|AppLovin>`)),
   });
 });
 
