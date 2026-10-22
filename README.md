@@ -12,7 +12,7 @@ When a user edits a message containing HTML or an archive, the bot reprocesses t
 
 ## Statistics
 
-The bot stores one SQLite record for each extracted HTML/HTM file each time it is checked. Records include the check timestamp, uploader Slack ID and display-name snapshot, filename, naming/content check results, upload outcome, and issue details. File contents and message text are not stored. Reuploads and edited-message rechecks count as new processing attempts. SQLite data is kept in the `dimo-stats` Docker volume at `/app/data`; set `STATS_DB_PATH` to override the database location.
+The bot stores one SQLite record for each extracted HTML/HTM file that fails validation or is part of a completed upload attempt. Valid files in a batch rejected because another file failed validation are not recorded. Records include the check timestamp, uploader Slack ID and display-name snapshot, filename, naming/content check results, upload outcome, and issue details. File contents and message text are not stored. Reuploads and edited-message rechecks count as new processing attempts. SQLite data is kept in the `dimo-stats` Docker volume at `/app/data`; set `STATS_DB_PATH` to override the database location.
 
 Create a Slack slash command named `/stats` for this app. The command is available in Socket Mode. Usage:
 

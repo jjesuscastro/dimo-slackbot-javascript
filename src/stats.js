@@ -27,6 +27,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_file_stats_checked_at ON file_stats(checked_at);
   CREATE INDEX IF NOT EXISTS idx_file_stats_uploader ON file_stats(uploader_id, checked_at);
 `);
+// Remove stale intermediate outcomes from databases created by older versions.
+db.prepare("DELETE FROM file_stats WHERE outcome = 'pending_upload'").run();
 
 const insertFile = db.prepare(`INSERT INTO file_stats
   (checked_at, uploader_id, uploader_display_name, filename, naming_ok,

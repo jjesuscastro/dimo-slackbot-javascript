@@ -296,14 +296,14 @@ app.event('message', async ({ event, client, logger }) => {
       has_mraid_open: Number(!contentErrors.includes('Must contain `mraid.open`.')),
       has_window_open: Number(contentErrors.includes('Must not contain `window.open`.')),
       uploaded: 0,
-      outcome: errors.length ? 'validation_failed' : 'pending_upload',
+      outcome: errors.length ? 'validation_failed' : '',
       issue_details: errors.join('; '),
     });
     if (errors.length) invalidFiles.push({ filename, errors });
     if (check.valid) correctlyNamedFiles.push(filename);
   }
   if (invalidFiles.length) {
-    recordFiles(records);
+    recordFiles(records.filter((row) => row.outcome === 'validation_failed'));
     const issueLines = invalidFiles.map(({ filename, errors }) =>
       `- \`${filename}\`:\n  - ${errors.join('\n  - ')}`,
     );
