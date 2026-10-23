@@ -9,7 +9,10 @@ const { createExtractorFromData } = require('node-unrar-js');
 const { validateFilename } = require('./filename-validator');
 const { uploadDefault } = require('./plec');
 const { recordFiles, getStats, getCsvRows, toCsv, periodLabels } = require('./stats');
-const { listProjects, addProjectFiles, getProjectFiles, getProject, clearProjectFiles } = require('./projects');
+const {
+  listProjects, addProjectFiles, getProjectFiles, getProjectFileNames,
+  getProject, clearProjectFiles, removeProjectFiles,
+} = require('./projects');
 
 const { SLACK_BOT_TOKEN, SLACK_APP_TOKEN } = process.env;
 if (!SLACK_BOT_TOKEN || !SLACK_APP_TOKEN) {
@@ -79,6 +82,7 @@ function formatStats(stats) {
 function projectModal(action = 'add') {
   const actionOptions = [
     { text: { type: 'plain_text', text: 'Add files' }, value: 'add' },
+    { text: { type: 'plain_text', text: 'View files' }, value: 'view' },
     { text: { type: 'plain_text', text: 'Create ZIP' }, value: 'zip' },
   ];
   const blocks = [
@@ -104,26 +108,64 @@ function projectModal(action = 'add') {
       },
       {
         type: 'input', block_id: 'project_links_block',
-        label: { type: 'plain_text', text: 'Slack file links' },
+        label: { type: 'plain_text', text: 'Slack file or message links' },
         element: { type: 'plain_text_input', action_id: 'project_links', multiline: true,
-          placeholder: { type: 'plain_text', text: 'Paste one or more Slack file links' } },
+          placeholder: { type: 'plain_text', text: 'Paste one or more Slack file or message links' } },
       },
     );
   } else {
     if (!listProjects().length) {
       blocks.push({ type: 'section', text: { type: 'mrkdwn', text: 'There are no projects yet. Switch to *Add files* and create one first.' } });
     }
+    const pickerAction = action === 'zip' ? 'project_zip_picker' : 'project_view_picker';
+    const pickerBlock = action === 'zip' ? 'project_zip_picker_block' : 'project_view_picker_block';
     blocks.push({
-      type: 'input', block_id: 'project_zip_picker_block', label: { type: 'plain_text', text: 'Project' },
-      element: { type: 'external_select', action_id: 'project_zip_picker', min_query_length: 0,
-        placeholder: { type: 'plain_text', text: 'Search for a project to ZIP' } },
+      type: 'input', block_id: pickerBlock, label: { type: 'plain_text', text: 'Project' },
+      element: { type: 'external_select', action_id: pickerAction, min_query_length: 0,
+        placeholder: { type: 'plain_text', text: action === 'zip' ? 'Search for a project to ZIP' : 'Search for a project to view or remove files' } },
     });
   }
   return {
     type: 'modal', callback_id: 'project_workflow_submit', private_metadata: '',
     title: { type: 'plain_text', text: 'Project files' },
-    submit: { type: 'plain_text', text: action === 'add' ? 'Add files' : 'Create ZIP' },
+    submit: { type: 'plain_text', text: action === 'add' ? 'Add files' : action === 'view' ? 'View files' : 'Create ZIP' },
     close: { type: 'plain_text', text: 'Cancel' }, blocks,
+  };
+}
+
+function projectViewFilesModal(projectId, channelId) {
+  const project = getProject(projectId);
+  const files = getProjectFileNames(projectId);
+  const blocks = [{
+    type: 'section',
+    text: { type: 'plain_text', text: `Files in ${project.name} (${files.length} total):` },
+  }];
+  const visibleFiles = files.slice(0, 80);
+  for (let index = 0; index < visibleFiles.length; index += 10) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'plain_text', text: visibleFiles.slice(index, index + 10)
+        .map(({ filename }) => `- ${filename.replace(/[\r\n]/g, ' ').slice(0, 240)}`).join('\n') },
+    });
+  }
+  if (files.length > visibleFiles.length) {
+    blocks.push({ type: 'context', elements: [{
+      type: 'plain_text', text: `Showing the first ${visibleFiles.length}; search below to find any file.`,
+    }] });
+  }
+  blocks.push({
+    type: 'input', block_id: 'project_view_remove_files_block', optional: true,
+    label: { type: 'plain_text', text: 'Select files to remove (optional)' },
+    element: { type: 'multi_external_select', action_id: 'project_view_remove_files_picker', min_query_length: 0,
+      max_selected_items: 100, placeholder: { type: 'plain_text', text: 'Search and select files to remove' } },
+  });
+  return {
+    type: 'modal', callback_id: 'project_workflow_submit',
+    private_metadata: JSON.stringify({ channelId, viewProjectId: projectId }),
+    title: { type: 'plain_text', text: 'View project files' },
+    submit: { type: 'plain_text', text: 'Done / Remove selected' },
+    close: { type: 'plain_text', text: 'Cancel' },
+    blocks,
   };
 }
 
@@ -170,6 +212,25 @@ app.options('project_add_picker', async ({ ack, body }) => {
 
 app.options('project_zip_picker', async ({ ack, body }) => {
   await ack({ options: projectPickerOptions(body.value) });
+});
+
+app.options('project_view_picker', async ({ ack, body }) => {
+  await ack({ options: projectPickerOptions(body.value) });
+});
+
+app.options('project_view_remove_files_picker', async ({ ack, body }) => {
+  let projectId;
+  try { projectId = JSON.parse(body.view.private_metadata || '{}').viewProjectId; } catch { projectId = null; }
+  if (!projectId || !getProject(projectId)) {
+    await ack({ options: [] });
+    return;
+  }
+  const query = String(body.value || '').trim().toLocaleLowerCase();
+  const options = getProjectFileNames(projectId)
+    .filter(({ filename }) => filename.toLocaleLowerCase().includes(query))
+    .slice(0, 100)
+    .map(({ id, filename }) => ({ text: { type: 'plain_text', text: filename.slice(0, 75) }, value: String(id) }));
+  await ack({ options });
 });
 
 app.command('/stats', async ({ command, ack, respond, client, logger }) => {
@@ -320,14 +381,31 @@ function validateHtmlContent(bytes) {
   return errors;
 }
 
-function extractSlackFileIds(text) {
+function parseProjectLinks(text) {
   const urls = String(text || '').match(/https?:\/\/[^\s<>|]+/gi) || [];
-  const ids = [];
-  for (const url of urls) {
+  const links = [];
+  const seen = new Set();
+  for (const rawUrl of urls) {
+    const url = rawUrl.replace(/[.,;!)]*$/, '');
+    const messageMatch = url.match(/\/archives\/([CGD][A-Z0-9]+)\/p(\d{10,})(?:\/|$|[?#])/i);
+    if (messageMatch && messageMatch[2].length > 6) {
+      const digits = messageMatch[2];
+      const link = { type: 'message', channelId: messageMatch[1].toUpperCase(),
+        timestamp: `${digits.slice(0, -6)}.${digits.slice(-6)}` };
+      const key = `${link.type}:${link.channelId}:${link.timestamp}`;
+      if (!seen.has(key)) links.push(link);
+      seen.add(key);
+      continue;
+    }
     const match = url.match(/(?:^|[\/-])(F[A-Z0-9]{8,})(?=$|[\/?&#.,)-])/i);
-    if (match && !ids.includes(match[1].toUpperCase())) ids.push(match[1].toUpperCase());
+    if (match) {
+      const link = { type: 'file', fileId: match[1].toUpperCase() };
+      const key = `${link.type}:${link.fileId}`;
+      if (!seen.has(key)) links.push(link);
+      seen.add(key);
+    }
   }
-  return ids;
+  return links;
 }
 
 async function postProjectPrivateMessage(client, channelId, userId, text) {
@@ -366,20 +444,22 @@ function makeProjectZip(files) {
 
 app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) => {
   const values = view.state.values;
-  const action = values.project_action_block?.project_action?.selected_option?.value;
   const metadata = (() => {
     try { return JSON.parse(view.private_metadata || '{}'); } catch { return {}; }
   })();
+  const action = values.project_action_block?.project_action?.selected_option?.value
+    || (metadata.viewProjectId ? 'view' : undefined);
   const channelId = metadata.channelId;
   const userId = body.user.id;
   let projectName = '';
   let projectId = null;
   let links = [];
+  let removalIds = [];
 
   if (action === 'add') {
     const selection = values.project_add_picker_block?.project_add_picker?.selected_option?.value;
     const newName = values.project_name_block?.project_name?.value?.trim() || '';
-    links = extractSlackFileIds(values.project_links_block?.project_links?.value);
+    links = parseProjectLinks(values.project_links_block?.project_links?.value);
     if (!selection) {
       await ack({ response_action: 'errors', errors: { project_add_picker_block: 'Choose a project or create a new one.' } });
       return;
@@ -393,7 +473,7 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
       return;
     }
     if (!links.length) {
-      await ack({ response_action: 'errors', errors: { project_links_block: 'Paste at least one valid Slack file link.' } });
+      await ack({ response_action: 'errors', errors: { project_links_block: 'Paste at least one Slack file link or message link.' } });
       return;
     }
     projectName = selection === 'new_project' ? newName : '';
@@ -409,6 +489,44 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
       await ack({ response_action: 'errors', errors: { project_zip_picker_block: 'Choose an existing project.' } });
       return;
     }
+  } else if (action === 'view') {
+    if (metadata.viewProjectId) {
+      projectId = Number(metadata.viewProjectId);
+      const selected = values.project_view_remove_files_block?.project_view_remove_files_picker?.selected_options || [];
+      removalIds = selected.map(({ value }) => Number(value));
+      if (!Number.isInteger(projectId) || !getProject(projectId)) {
+        await ack({ response_action: 'errors', errors: { project_view_remove_files_block: 'That project is no longer available.' } });
+        return;
+      }
+      if (removalIds.some((id) => !Number.isInteger(id))) {
+        await ack({ response_action: 'errors', errors: { project_view_remove_files_block: 'Choose files from the project list.' } });
+        return;
+      }
+      if (!removalIds.length) {
+        await ack({ response_action: 'clear' });
+        await postProjectPrivateMessage(client, channelId, userId, `No files removed from *${getProject(projectId).name}*.`);
+        return;
+      }
+      const existingIds = new Set(getProjectFileNames(projectId).map(({ id }) => id));
+      if (removalIds.some((id) => !existingIds.has(id))) {
+        await ack({ response_action: 'errors', errors: { project_view_remove_files_block: 'Some selected files are no longer in this project. Reopen the picker and try again.' } });
+        return;
+      }
+    } else {
+      const selection = values.project_view_picker_block?.project_view_picker?.selected_option?.value;
+      projectId = Number(selection);
+      if (!selection || !Number.isInteger(projectId) || !getProject(projectId)) {
+        await ack({ response_action: 'errors', errors: { project_view_picker_block: 'Choose an existing project.' } });
+        return;
+      }
+      if (!getProjectFileNames(projectId).length) {
+        await ack({ response_action: 'clear' });
+        await postProjectPrivateMessage(client, channelId, userId, `Project "${getProject(projectId).name}" has no files.`);
+        return;
+      }
+      await ack({ response_action: 'update', view: projectViewFilesModal(projectId, channelId) });
+      return;
+    }
   } else {
     await ack({ response_action: 'errors', errors: { project_action_block: 'Choose Add files or Create ZIP.' } });
     return;
@@ -416,49 +534,83 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
 
   await ack({ response_action: 'clear' });
   try {
+    if (action === 'view' && removalIds.length) {
+      const project = getProject(projectId);
+      const removed = removeProjectFiles(projectId, removalIds);
+      await postProjectPrivateMessage(client, channelId, userId,
+        `Removed ${removed} file${removed === 1 ? '' : 's'} from *${project.name}*.`);
+      return;
+    }
+
     if (action === 'add') {
       const collected = [];
       const errors = [];
-      for (const fileId of links) {
+      for (const link of links) {
         try {
-          const result = await client.files.info({ file: fileId });
-          const slackFile = result.file;
-          if (!slackFile?.name) throw new Error('Slack did not return a filename for that link.');
-          const filename = path.posix.basename(slackFile.name.replaceAll('\\', '/'));
-          if (/\.html?$/i.test(filename)) {
-            const bytes = await downloadSlackFile(slackFile, MAX_HTML_FILE_BYTES);
-            collected.push({ sourceFileId: fileId, entryName: filename, filename, bytes });
-          } else if (/\.(?:zip|rar|7z)$/i.test(filename)) {
-            const archiveBytes = await downloadSlackFile(slackFile);
-            let extracted;
-            if (/\.zip$/i.test(filename)) extracted = extractHtmlFiles(archiveBytes);
-            else if (/\.rar$/i.test(filename)) extracted = await extractRarFiles(archiveBytes);
-            else extracted = await extractSevenZipFiles(archiveBytes);
-            if (!extracted.length) throw new Error('The archive contains no HTML or HTM files.');
-            for (const item of extracted) {
-              collected.push({ sourceFileId: fileId, entryName: item.entryName || item.filename,
-                filename: item.filename, bytes: item.bytes });
-            }
+          let fileIds;
+          if (link.type === 'file') {
+            fileIds = [link.fileId];
           } else {
-            throw new Error('Only HTML, HTM, ZIP, RAR, or 7z files are supported.');
+            const result = await client.conversations.history({
+              channel: link.channelId, oldest: link.timestamp, inclusive: true, limit: 1,
+            });
+            const message = result.messages?.find(({ ts }) => ts === link.timestamp);
+            if (!message) throw new Error('The linked message was not found or is not accessible to the bot.');
+            const attachedFiles = [
+              ...(message.files || []),
+              ...(message.attachments || []).filter((attachment) => attachment.file_id || attachment.id),
+            ];
+            fileIds = [...new Set(attachedFiles.map((file) => file.id || file.file_id).filter(Boolean))];
+            if (!fileIds.length) throw new Error('The linked message has no attached files.');
+          }
+
+          for (const fileId of fileIds) {
+            try {
+              const result = await client.files.info({ file: fileId });
+              const slackFile = result.file;
+              if (!slackFile?.name) throw new Error('Slack did not return a filename for that file.');
+              const filename = path.posix.basename(slackFile.name.replaceAll('\\', '/'));
+              if (/\.html?$/i.test(filename)) {
+                const bytes = await downloadSlackFile(slackFile, MAX_HTML_FILE_BYTES);
+                collected.push({ sourceFileId: fileId, entryName: filename, filename, bytes });
+              } else if (/\.(?:zip|rar|7z)$/i.test(filename)) {
+                const archiveBytes = await downloadSlackFile(slackFile);
+                let extracted;
+                if (/\.zip$/i.test(filename)) extracted = extractHtmlFiles(archiveBytes);
+                else if (/\.rar$/i.test(filename)) extracted = await extractRarFiles(archiveBytes);
+                else extracted = await extractSevenZipFiles(archiveBytes);
+                if (!extracted.length) throw new Error('The archive contains no HTML or HTM files.');
+                for (const item of extracted) {
+                  collected.push({ sourceFileId: fileId, entryName: item.entryName || item.filename,
+                    filename: item.filename, bytes: item.bytes });
+                }
+              } else {
+                throw new Error('Only HTML, HTM, ZIP, RAR, or 7z files are supported.');
+              }
+            } catch (error) {
+              errors.push(`${fileId}: ${error.message}`);
+              logger.warn(`Could not add Slack file ${fileId} to a project:`, error);
+            }
           }
         } catch (error) {
-          errors.push(`${fileId}: ${error.message}`);
-          logger.warn(`Could not add Slack file ${fileId} to a project:`, error);
+          const label = link.type === 'message' ? `${link.channelId}/${link.timestamp}` : link.fileId;
+          errors.push(`${label}: ${error.message}`);
+          logger.warn(`Could not process project source ${label}:`, error);
         }
       }
       if (!collected.length) {
         await postProjectPrivateMessage(client, channelId, userId,
-          `I could not add any files. ${errors.join(' ') || 'Those files may already be in the project.'}`);
+          `I could not add any files. ${errors.join(' ') || 'No supported files were found.'}`);
         return;
       }
       const result = addProjectFiles(projectName || getProject(projectId).name, collected);
       const details = [
-        result.added
-          ? `Added ${result.added} file${result.added === 1 ? '' : 's'} to *${result.project.name}*.`
-          : `All files were already in *${result.project.name}*; nothing new was added.`,
-        result.added < collected.length ? `${collected.length - result.added} duplicate file${collected.length - result.added === 1 ? '' : 's'} skipped.` : '',
-        errors.length ? `${errors.length} link${errors.length === 1 ? '' : 's'} could not be processed: ${errors.join(' ')}` : '',
+        result.added && result.replaced
+          ? `Added ${result.added} new file${result.added === 1 ? '' : 's'} and replaced ${result.replaced} existing file${result.replaced === 1 ? '' : 's'} in *${result.project.name}* with the latest versions.`
+          : result.replaced
+            ? `Replaced ${result.replaced} existing file${result.replaced === 1 ? '' : 's'} in *${result.project.name}* with the latest versions.`
+            : `Added ${result.added} file${result.added === 1 ? '' : 's'} to *${result.project.name}*.`,
+        errors.length ? `${errors.length} file or message source${errors.length === 1 ? '' : 's'} could not be processed: ${errors.join(' ')}` : '',
       ].filter(Boolean).join(' ');
       await postProjectPrivateMessage(client, channelId, userId, details);
       return;

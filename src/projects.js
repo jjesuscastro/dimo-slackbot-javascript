@@ -43,15 +43,21 @@ function addProjectFiles(projectName, files) {
     db.prepare('INSERT INTO project_collections (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING')
       .run(name, new Date().toISOString());
     const project = db.prepare('SELECT id, name FROM project_collections WHERE name = ? COLLATE NOCASE').get(name);
+    const removeSameFilename = db.prepare(`DELETE FROM project_files
+      WHERE project_id = ? AND filename = ? COLLATE NOCASE`);
     const insert = db.prepare(`INSERT INTO project_files
       (project_id, source_file_id, entry_name, filename, content, added_at)
       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, source_file_id, entry_name) DO NOTHING`);
     let added = 0;
+    let replaced = 0;
     for (const file of files) {
-      added += insert.run(project.id, file.sourceFileId, file.entryName, file.filename,
+      const previousMatches = removeSameFilename.run(project.id, file.filename).changes;
+      const inserted = insert.run(project.id, file.sourceFileId, file.entryName, file.filename,
         file.bytes, new Date().toISOString()).changes;
+      if (previousMatches) replaced += previousMatches;
+      else added += inserted;
     }
-    return { project, added };
+    return { project, added, replaced };
   });
   return transaction();
 }
@@ -59,6 +65,10 @@ function addProjectFiles(projectName, files) {
 function getProjectFiles(projectId) {
   return db.prepare(`SELECT id, filename, content FROM project_files
     WHERE project_id = ? ORDER BY id`).all(projectId);
+}
+
+function getProjectFileNames(projectId) {
+  return db.prepare(`SELECT id, filename FROM project_files WHERE project_id = ? ORDER BY id`).all(projectId);
 }
 
 function getProject(projectId) {
@@ -72,4 +82,11 @@ function clearProjectFiles(projectId, fileIds) {
     .run(projectId, ...fileIds).changes;
 }
 
-module.exports = { listProjects, addProjectFiles, getProjectFiles, getProject, clearProjectFiles };
+function removeProjectFiles(projectId, fileIds) {
+  return clearProjectFiles(projectId, fileIds);
+}
+
+module.exports = {
+  listProjects, addProjectFiles, getProjectFiles, getProjectFileNames,
+  getProject, clearProjectFiles, removeProjectFiles,
+};
