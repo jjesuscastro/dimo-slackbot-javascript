@@ -11,7 +11,7 @@ const { uploadDefault } = require('./plec');
 const { recordFiles, getStats, getCsvRows, toCsv, periodLabels } = require('./stats');
 const {
   listProjects, addProjectFiles, getProjectFiles, getProjectFileNames,
-  getProject, clearProjectFiles, removeProjectFiles,
+  getProject, removeProjectFiles, finishProjectZip,
 } = require('./projects');
 
 const { SLACK_BOT_TOKEN, SLACK_APP_TOKEN } = process.env;
@@ -79,7 +79,7 @@ function formatStats(stats) {
   return lines.join('\n');
 }
 
-function projectModal(action = 'add') {
+function projectModal(action = 'add', addProjectSelection = null) {
   const actionOptions = [
     { text: { type: 'plain_text', text: 'Add files' }, value: 'add' },
     { text: { type: 'plain_text', text: 'View files' }, value: 'view' },
@@ -94,18 +94,22 @@ function projectModal(action = 'add') {
     },
   ];
   if (action === 'add') {
+    const showProjectName = addProjectSelection?.value === 'new_project';
+    const projectPicker = {
+      type: 'input', block_id: 'project_add_picker_block', dispatch_action: true,
+      label: { type: 'plain_text', text: 'Project' },
+      element: { type: 'external_select', action_id: 'project_add_picker', min_query_length: 0,
+        ...(addProjectSelection ? { initial_option: addProjectSelection } : {}),
+        placeholder: { type: 'plain_text', text: 'Search or choose a project' } },
+    };
     blocks.push(
-      {
-        type: 'input', block_id: 'project_add_picker_block', label: { type: 'plain_text', text: 'Project' },
-        element: { type: 'external_select', action_id: 'project_add_picker', min_query_length: 0,
-          placeholder: { type: 'plain_text', text: 'Search or choose a project' } },
-      },
-      {
+      projectPicker,
+      ...(showProjectName ? [{
         type: 'input', block_id: 'project_name_block', optional: true,
         label: { type: 'plain_text', text: 'New project name (only when creating a project)' },
         element: { type: 'plain_text_input', action_id: 'project_name', max_length: 80,
           placeholder: { type: 'plain_text', text: 'For example, Spring Launch' } },
-      },
+      }] : []),
       {
         type: 'input', block_id: 'project_links_block',
         label: { type: 'plain_text', text: 'Slack file or message links' },
@@ -203,6 +207,17 @@ app.action('project_action', async ({ ack, body, client, logger }) => {
     await client.views.update({ view_id: body.view.id, hash: body.view.hash, view });
   } catch (error) {
     logger.error('Could not update project manager:', error);
+  }
+});
+
+app.action('project_add_picker', async ({ ack, body, client, logger }) => {
+  await ack();
+  const view = projectModal('add', body.actions[0].selected_option || null);
+  view.private_metadata = body.view.private_metadata;
+  try {
+    await client.views.update({ view_id: body.view.id, hash: body.view.hash, view });
+  } catch (error) {
+    logger.error('Could not update the Add files form:', error);
   }
 });
 
@@ -390,8 +405,15 @@ function parseProjectLinks(text) {
     const messageMatch = url.match(/\/archives\/([CGD][A-Z0-9]+)\/p(\d{10,})(?:\/|$|[?#])/i);
     if (messageMatch && messageMatch[2].length > 6) {
       const digits = messageMatch[2];
+      let threadTs = null;
+      try {
+        const queryThreadTs = new URL(url).searchParams.get('thread_ts');
+        if (queryThreadTs && /^\d+\.\d+$/.test(queryThreadTs)) threadTs = queryThreadTs;
+      } catch {
+        // The channel and message timestamp still identify the message without query metadata.
+      }
       const link = { type: 'message', channelId: messageMatch[1].toUpperCase(),
-        timestamp: `${digits.slice(0, -6)}.${digits.slice(-6)}` };
+        timestamp: `${digits.slice(0, -6)}.${digits.slice(-6)}`, threadTs };
       const key = `${link.type}:${link.channelId}:${link.timestamp}`;
       if (!seen.has(key)) links.push(link);
       seen.add(key);
@@ -551,11 +573,30 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
           if (link.type === 'file') {
             fileIds = [link.fileId];
           } else {
-            const result = await client.conversations.history({
-              channel: link.channelId, oldest: link.timestamp, inclusive: true, limit: 1,
-            });
-            const message = result.messages?.find(({ ts }) => ts === link.timestamp);
-            if (!message) throw new Error('The linked message was not found or is not accessible to the bot.');
+            let message;
+            let historyError;
+            try {
+              const result = await client.conversations.history({
+                channel: link.channelId, oldest: link.timestamp, latest: link.timestamp,
+                inclusive: true, limit: 1,
+              });
+              message = result.messages?.find(({ ts }) => ts === link.timestamp);
+            } catch (error) {
+              historyError = error;
+            }
+            if (!message) {
+              try {
+                const thread = await client.conversations.replies({
+                  channel: link.channelId, ts: link.threadTs || link.timestamp,
+                  oldest: link.timestamp, latest: link.timestamp, inclusive: true, limit: 1,
+                });
+                message = thread.messages?.find(({ ts }) => ts === link.timestamp);
+              } catch (threadError) {
+                const detail = threadError.data?.error || threadError.message;
+                throw new Error(`The exact message could not be read from channel history${historyError ? ` (${historyError.data?.error || historyError.message})` : ''} or its thread (${detail}).`);
+              }
+            }
+            if (!message) throw new Error('The linked message was not found or is not accessible to the bot. Check the conversation history scope and thread access.');
             const attachedFiles = [
               ...(message.files || []),
               ...(message.attachments || []).filter((attachment) => attachment.file_id || attachment.id),
@@ -633,10 +674,12 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
       title: `${project.name} project files`,
       initial_comment: `Private project ZIP: ${project.name} (${files.length} HTML/HTM files).`,
     });
-    clearProjectFiles(projectId, files.map(({ id }) => id));
+    const cleanup = finishProjectZip(projectId, files.map(({ id }) => id));
     try {
       await postProjectPrivateMessage(client, channelId, userId,
-        `I sent *${filename}* to your private messages and cleared ${files.length} file${files.length === 1 ? '' : 's'} from *${project.name}*.`);
+        cleanup.projectDeleted
+          ? `I sent *${filename}* to your private messages and removed *${project.name}* and its ${cleanup.cleared} file${cleanup.cleared === 1 ? '' : 's'} from the project collection.`
+          : `I sent *${filename}* to your private messages and removed ${cleanup.cleared} packaged file${cleanup.cleared === 1 ? '' : 's'} from *${project.name}*. Files added while the ZIP was being prepared remain in the project.`);
     } catch (notificationError) {
       logger.error('ZIP was delivered, but its private confirmation could not be posted:', notificationError);
     }

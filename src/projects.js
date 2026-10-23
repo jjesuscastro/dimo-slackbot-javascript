@@ -86,7 +86,18 @@ function removeProjectFiles(projectId, fileIds) {
   return clearProjectFiles(projectId, fileIds);
 }
 
+function finishProjectZip(projectId, fileIds) {
+  const transaction = db.transaction(() => {
+    const cleared = clearProjectFiles(projectId, fileIds);
+    const projectDeleted = db.prepare(`DELETE FROM project_collections
+      WHERE id = ? AND NOT EXISTS (SELECT 1 FROM project_files WHERE project_id = ?)`)
+      .run(projectId, projectId).changes > 0;
+    return { cleared, projectDeleted };
+  });
+  return transaction();
+}
+
 module.exports = {
   listProjects, addProjectFiles, getProjectFiles, getProjectFileNames,
-  getProject, clearProjectFiles, removeProjectFiles,
+  getProject, clearProjectFiles, removeProjectFiles, finishProjectZip,
 };
