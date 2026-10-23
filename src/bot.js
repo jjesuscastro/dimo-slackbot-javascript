@@ -187,7 +187,7 @@ function projectPickerOptions(query, includeCreate = false) {
 }
 
 app.command('/project', async ({ command, ack, client, respond, logger }) => {
-  await ack({ response_type: 'ephemeral', text: 'Opening your private project manager.' });
+  await ack();
   const view = projectModal();
   view.private_metadata = JSON.stringify({ channelId: command.channel_id });
   try {
@@ -526,7 +526,6 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
       }
       if (!removalIds.length) {
         await ack({ response_action: 'clear' });
-        await postProjectPrivateMessage(client, channelId, userId, `No files removed from *${getProject(projectId).name}*.`);
         return;
       }
       const existingIds = new Set(getProjectFileNames(projectId).map(({ id }) => id));
@@ -557,10 +556,7 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
   await ack({ response_action: 'clear' });
   try {
     if (action === 'view' && removalIds.length) {
-      const project = getProject(projectId);
-      const removed = removeProjectFiles(projectId, removalIds);
-      await postProjectPrivateMessage(client, channelId, userId,
-        `Removed ${removed} file${removed === 1 ? '' : 's'} from *${project.name}*.`);
+      removeProjectFiles(projectId, removalIds);
       return;
     }
 
@@ -644,16 +640,11 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
           `I could not add any files. ${errors.join(' ') || 'No supported files were found.'}`);
         return;
       }
-      const result = addProjectFiles(projectName || getProject(projectId).name, collected);
-      const details = [
-        result.added && result.replaced
-          ? `Added ${result.added} new file${result.added === 1 ? '' : 's'} and replaced ${result.replaced} existing file${result.replaced === 1 ? '' : 's'} in *${result.project.name}* with the latest versions.`
-          : result.replaced
-            ? `Replaced ${result.replaced} existing file${result.replaced === 1 ? '' : 's'} in *${result.project.name}* with the latest versions.`
-            : `Added ${result.added} file${result.added === 1 ? '' : 's'} to *${result.project.name}*.`,
-        errors.length ? `${errors.length} file or message source${errors.length === 1 ? '' : 's'} could not be processed: ${errors.join(' ')}` : '',
-      ].filter(Boolean).join(' ');
-      await postProjectPrivateMessage(client, channelId, userId, details);
+      addProjectFiles(projectName || getProject(projectId).name, collected);
+      if (errors.length) {
+        await postProjectPrivateMessage(client, channelId, userId,
+          `${errors.length} file or message source${errors.length === 1 ? '' : 's'} could not be processed: ${errors.join(' ')}`);
+      }
       return;
     }
 
@@ -672,17 +663,8 @@ app.view('project_workflow_submit', async ({ ack, body, view, client, logger }) 
       file: Buffer.from(zipBytes),
       filename,
       title: `${project.name} project files`,
-      initial_comment: `Private project ZIP: ${project.name} (${files.length} HTML/HTM files).`,
     });
-    const cleanup = finishProjectZip(projectId, files.map(({ id }) => id));
-    try {
-      await postProjectPrivateMessage(client, channelId, userId,
-        cleanup.projectDeleted
-          ? `I sent *${filename}* to your private messages and removed *${project.name}* and its ${cleanup.cleared} file${cleanup.cleared === 1 ? '' : 's'} from the project collection.`
-          : `I sent *${filename}* to your private messages and removed ${cleanup.cleared} packaged file${cleanup.cleared === 1 ? '' : 's'} from *${project.name}*. Files added while the ZIP was being prepared remain in the project.`);
-    } catch (notificationError) {
-      logger.error('ZIP was delivered, but its private confirmation could not be posted:', notificationError);
-    }
+    finishProjectZip(projectId, files.map(({ id }) => id));
   } catch (error) {
     logger.error('Project workflow failed:', error);
     await postProjectPrivateMessage(client, channelId, userId,
