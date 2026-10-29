@@ -30,12 +30,6 @@ Create a Slack slash command named `/stats` for this app. The command is availab
 
 All date boundaries use Asia/Manila. The summary is ephemeral to the person running the command. A CSV export is sent in a private DM to that person. It contains one row per processing attempt, including uploader and individual naming/content/upload results. Add bot token scopes `users:read` (display-name lookup), `files:write` (CSV uploads), and `im:write` (open a private DM), plus the existing `chat:write`; retain the file-reading and history scopes needed by the bot. Reinstall the app after changing scopes.
 
-## Project ZIPs
-
-Create a Slack slash command named `/project` for this app. Running it opens a private modal with **Add files**, **View files**, and **Create ZIP** actions. The add flow accepts one or more Slack file links or message links. Message links contribute their attached HTML/HTM files or ZIP, RAR, and 7z archives; archives contribute their HTML/HTM entries. The bot must have history access to the linked conversation and be a member of private conversations. Files are stored in the project's SQLite collection. When a file is added with a filename that already exists in the project (case-insensitive), the newer file replaces the earlier one. **View files** displays the project's filenames and includes a searchable multi-select to remove files. The ZIP flow sends the project archive in a private DM to the person who ran the command, then removes the packaged files and deletes the empty project from the collection. If new files are added while a ZIP is being prepared, those files remain in the project. A failed ZIP upload leaves the collection available for retry. Project contents are stored in the same SQLite database as statistics and use the existing `STATS_DB_PATH` override.
-
-The bot sends project confirmations and errors ephemerally in the channel where `/project` was run, with a private DM fallback when the conversation does not support ephemeral messages. Keep bot scopes `files:read`, `files:write`, `im:write`, and `chat:write`; enable slash commands and interactivity for the app. Reinstall the app after changing scopes or command configuration.
-
 ## Run locally
 
 Requires Node.js 20 or newer.
@@ -73,8 +67,7 @@ Create a Slack app named **Dimo PLEC Slack Bot** for the workspace and configure
 
 - **Socket Mode:** enabled; create an app-level token with `connections:write` and set it as `SLACK_APP_TOKEN`.
 - **Bot token scopes:** `chat:write`, `files:read`, `files:write`, `users:read`, `im:write`, and history scopes for the conversations you want it to watch (`channels:history`, `groups:history`, and/or `im:history`). Add the bot to the target channel.
-- **Slash commands:** create `/stats` and `/project` for the app. Socket Mode carries the command event; no public request URL is needed.
-- **Interactivity:** enable interactivity so `/project` can open and submit its modal. Socket Mode carries the interactions; no public request URL is needed.
+- **Slash commands:** create `/stats` for the app. Socket Mode carries the command event; no public request URL is needed.
 - **Event subscriptions:** subscribe to the bot event `message.channels`; add `message.groups` or `message.im` if those conversation types are needed.
 - Install or reinstall the app after changing scopes, then set the generated bot token as `SLACK_BOT_TOKEN`.
 
