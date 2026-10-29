@@ -389,10 +389,15 @@ function validateHtmlContent(bytes) {
   const html = bytes.toString('utf8');
   const windowOpenPattern = /\bwindow\s*(?:(?:\?\.|\.)\s*open\b|\[\s*(["'`])open\1\s*\])/;
   const mraidOpenPattern = /\bmraid\s*\.\s*open\b/;
+  const reservedClickPattern = /(?<![\w$])(?:clickTag1|clickthrough)(?![\w$])/gi;
   const errors = [];
 
   if (windowOpenPattern.test(html)) errors.push('Must not contain `window.open`.');
   if (!mraidOpenPattern.test(html)) errors.push('Must contain `mraid.open`.');
+  const reservedClickNames = [...new Set([...html.matchAll(reservedClickPattern)].map(([name]) => name))];
+  if (reservedClickNames.length) {
+    errors.push(`Rename reserved click identifier(s) ${reservedClickNames.join(', ')}. For click tracking, use the platform-injected \`window.clickTag\`.`);
+  }
   return errors;
 }
 
