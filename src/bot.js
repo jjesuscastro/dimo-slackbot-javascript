@@ -125,34 +125,50 @@ async function downloadSlackFile(file, maxBytes = Infinity) {
   return bytes;
 }
 
-function extractHtmlFiles(zipBytes) {
+function groupExtractedFiles(files) {
+  const htmlFiles = [];
+  const videoFiles = [];
+  for (const file of files) {
+    if (/\.mp4$/i.test(file.filename)) videoFiles.push({ ...file, name: file.filename, size: file.bytes.length });
+    else htmlFiles.push(file);
+  }
+  return { htmlFiles, videoFiles };
+}
+
+function extractSupportedZipFiles(zipBytes) {
   let limitError = '';
   const extracted = unzipSync(zipBytes, {
     filter: ({ name, originalSize }) => {
-      if (!/\.html?$/i.test(name)) return false;
-      if (originalSize > MAX_HTML_FILE_BYTES) limitError = 'An HTML file in the ZIP exceeds the 5 MB limit.';
+      const isHtml = /\.html?$/i.test(name);
+      const isVideo = /\.mp4$/i.test(name);
+      if (!isHtml && !isVideo) return false;
+      if (isHtml && originalSize > MAX_HTML_FILE_BYTES) limitError = 'An HTML file in the ZIP exceeds the 5 MB limit.';
+      if (isVideo && originalSize > MAX_VIDEO_PAIR_BYTES) limitError = 'An MP4 file in the ZIP exceeds the 3.40 MB per-video limit.';
       return !limitError;
     },
   });
   if (limitError) throw new Error(limitError);
 
-  return Object.entries(extracted).map(([entryName, bytes]) => ({
+  return groupExtractedFiles(Object.entries(extracted).map(([entryName, bytes]) => ({
     filename: path.posix.basename(entryName.replaceAll('\\', '/')),
     entryName: entryName.replaceAll('\\', '/'),
     bytes: Buffer.from(bytes),
-  }));
+  })));
 }
 
-function collectHtmlFilesFromMemoryFs(fs, directory, root = directory) {
+function collectSupportedFilesFromMemoryFs(fs, directory, root = directory) {
   const files = [];
   for (const entry of fs.readdir(directory)) {
     if (entry === '.' || entry === '..') continue;
     const entryPath = path.posix.join(directory, entry);
     const stat = fs.stat(entryPath);
     if (fs.isDir(stat.mode)) {
-      files.push(...collectHtmlFilesFromMemoryFs(fs, entryPath, root));
-    } else if (/\.html?$/i.test(entry)) {
-      if (stat.size > MAX_HTML_FILE_BYTES) {
+      files.push(...collectSupportedFilesFromMemoryFs(fs, entryPath, root));
+    } else if (/\.(?:html?|mp4)$/i.test(entry)) {
+      const isVideo = /\.mp4$/i.test(entry);
+      const maxBytes = isVideo ? MAX_VIDEO_PAIR_BYTES : MAX_HTML_FILE_BYTES;
+      if (stat.size > maxBytes) {
+        if (isVideo) throw new Error(`MP4 file \`${entry}\` in the 7z archive exceeds the 3.40 MB per-video limit.`);
         throw new Error('An HTML file in the archive exceeds the 5 MB limit.');
       }
       files.push({
@@ -184,14 +200,14 @@ async function extractSevenZipFiles(archiveBytes) {
     sevenZip = await SevenZip({ print: () => {}, printErr: () => {} });
     const fs = sevenZip.FS;
     fs.writeFile('/archive.7z', archiveBytes);
-    fs.mkdir('/html-output');
+    fs.mkdir('/supported-output');
     sevenZip.callMain([
-      'x', '-y', '-ssc-', '-r', '-o/html-output', '/archive.7z', '*.html', '*.htm',
+      'x', '-y', '-ssc-', '-r', '-o/supported-output', '/archive.7z', '*.html', '*.htm', '*.mp4',
     ]);
-    return collectHtmlFilesFromMemoryFs(fs, '/html-output');
+    return groupExtractedFiles(collectSupportedFilesFromMemoryFs(fs, '/supported-output'));
   } finally {
     if (sevenZip) {
-      removeMemoryFsPath(sevenZip.FS, '/html-output');
+      removeMemoryFsPath(sevenZip.FS, '/supported-output');
       removeMemoryFsPath(sevenZip.FS, '/archive.7z');
     }
   }
@@ -201,17 +217,22 @@ async function extractRarFiles(archiveBytes) {
   const data = Uint8Array.from(archiveBytes).buffer;
   const extractor = await createExtractorFromData({ data });
   const fileHeaders = [...extractor.getFileList().fileHeaders]
-    .filter(({ flags, name }) => !flags.directory && /\.html?$/i.test(name));
-  const oversizedFile = fileHeaders.find(({ unpSize }) => unpSize > MAX_HTML_FILE_BYTES);
-  if (oversizedFile) throw new Error(`HTML file \`${path.posix.basename(oversizedFile.name)}\` in the archive exceeds the 5 MB limit.`);
+    .filter(({ flags, name }) => !flags.directory && /\.(?:html?|mp4)$/i.test(name));
+  const oversizedFile = fileHeaders.find(({ unpSize, name }) =>
+    unpSize > (/\.mp4$/i.test(name) ? MAX_VIDEO_PAIR_BYTES : MAX_HTML_FILE_BYTES));
+  if (oversizedFile) {
+    const filename = path.posix.basename(oversizedFile.name);
+    if (/\.mp4$/i.test(filename)) throw new Error(`MP4 file \`${filename}\` in the RAR archive exceeds the 3.40 MB per-video limit.`);
+    throw new Error(`HTML file \`${filename}\` in the archive exceeds the 5 MB limit.`);
+  }
 
   const names = new Set(fileHeaders.map(({ name }) => name));
   const extracted = extractor.extract({ files: ({ name }) => names.has(name) });
-  return [...extracted.files].map(({ fileHeader, extraction }) => ({
+  return groupExtractedFiles([...extracted.files].map(({ fileHeader, extraction }) => ({
     filename: path.posix.basename(fileHeader.name.replaceAll('\\', '/')),
     entryName: fileHeader.name.replaceAll('\\', '/'),
     bytes: Buffer.from(extraction),
-  }));
+  })));
 }
 
 function validateHtmlContent(bytes) {
@@ -308,6 +329,41 @@ app.event('message', async ({ event, client, logger }) => {
   const candidates = message.files.filter((file) => /\.(?:html?|zip|rar|7z|mp4)$/i.test(file.name || ''));
   if (!candidates.length) return;
   const videoFiles = candidates.filter((file) => /\.mp4$/i.test(file.name || ''));
+  const uploaderId = message.user || 'unknown';
+  const htmlFiles = [];
+
+  for (const file of candidates) {
+    const filename = file.name || 'unnamed file';
+    try {
+      if (/\.mp4$/i.test(filename)) {
+        continue;
+      } else if (/\.zip$/i.test(filename)) {
+        const zipBytes = await downloadSlackFile(file);
+        const extracted = extractSupportedZipFiles(zipBytes);
+        htmlFiles.push(...extracted.htmlFiles);
+        videoFiles.push(...extracted.videoFiles);
+      } else if (/\.rar$/i.test(filename)) {
+        const archiveBytes = await downloadSlackFile(file);
+        const extracted = await extractRarFiles(archiveBytes);
+        htmlFiles.push(...extracted.htmlFiles);
+        videoFiles.push(...extracted.videoFiles);
+      } else if (/\.7z$/i.test(filename)) {
+        const archiveBytes = await downloadSlackFile(file);
+        const extracted = await extractSevenZipFiles(archiveBytes);
+        htmlFiles.push(...extracted.htmlFiles);
+        videoFiles.push(...extracted.videoFiles);
+      } else {
+        htmlFiles.push({ filename, bytes: await downloadSlackFile(file, MAX_HTML_FILE_BYTES) });
+      }
+    } catch (error) {
+      logger.error(`Failed to process ${filename}:`, error);
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts,
+        text: addEditTimestamp(`Could not process \`${filename}\`: ${error.message}`),
+      });
+    }
+  }
   let videoPairs = [];
   if (videoFiles.length) {
     const pairing = collectVideoPairs(videoFiles);
@@ -321,42 +377,18 @@ app.event('message', async ({ event, client, logger }) => {
     }
     videoPairs = pairing.pairs;
   }
-  const uploaderId = message.user || 'unknown';
+  if (!htmlFiles.length && !videoPairs.length) return;
   const uploaderDisplayName = await getUploaderName(client, uploaderId, message);
-  const htmlFiles = [];
-
-  for (const file of candidates) {
-    const filename = file.name || 'unnamed file';
-    try {
-      if (/\.mp4$/i.test(filename)) {
-        continue;
-      } else if (/\.zip$/i.test(filename)) {
-        const zipBytes = await downloadSlackFile(file);
-        htmlFiles.push(...extractHtmlFiles(zipBytes));
-      } else if (/\.rar$/i.test(filename)) {
-        const archiveBytes = await downloadSlackFile(file);
-        htmlFiles.push(...await extractRarFiles(archiveBytes));
-      } else if (/\.7z$/i.test(filename)) {
-        const archiveBytes = await downloadSlackFile(file);
-        htmlFiles.push(...await extractSevenZipFiles(archiveBytes));
-      } else {
-        htmlFiles.push({ filename, bytes: await downloadSlackFile(file, MAX_HTML_FILE_BYTES) });
-      }
-    } catch (error) {
-      logger.error(`Failed to process ${filename}:`, error);
-      await client.chat.postMessage({
-        channel: event.channel,
-        thread_ts,
-        text: addEditTimestamp(`Could not process \`${filename}\`: ${error.message}`),
-      });
-    }
-  }
   for (const pair of videoPairs) {
     try {
-      const portraitBytes = await downloadSlackFile(pair.portrait, MAX_VIDEO_PAIR_BYTES);
+      const portraitBytes = pair.portrait.bytes
+        ? Buffer.from(pair.portrait.bytes)
+        : await downloadSlackFile(pair.portrait, MAX_VIDEO_PAIR_BYTES);
       const remainingBytes = MAX_VIDEO_PAIR_BYTES - portraitBytes.length;
       if (remainingBytes <= 0) throw new Error('The portrait and landscape videos exceed the 3.40 MB pair limit.');
-      const landscapeBytes = await downloadSlackFile(pair.landscape, remainingBytes);
+      const landscapeBytes = pair.landscape.bytes
+        ? Buffer.from(pair.landscape.bytes)
+        : await downloadSlackFile(pair.landscape, remainingBytes);
       const bytes = portraitBytes.length + landscapeBytes.length;
       if (bytes > MAX_VIDEO_PAIR_BYTES) throw new Error('The portrait and landscape videos exceed the 3.40 MB pair limit.');
       htmlFiles.push({
