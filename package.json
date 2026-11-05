@@ -2,7 +2,7 @@
   "name": "dimo-plec-slack-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Slack bot that validates File Renamer HTML filenames and uploads them to PLEC Upload (Default).",
+  "description": "Slack bot that validates HTML and paired MP4 video filenames, converts videos to HTML, and uploads to PLEC Upload (Default).",
   "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js"
@@ -16,6 +16,7 @@
     "better-sqlite3": "12.11.1",
     "dotenv": "^16.4.7",
     "fflate": "^0.8.3",
+    "jsdom": "^26.1.0",
     "node-unrar-js": "^2.0.2"
   }
 }

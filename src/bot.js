@@ -7,6 +7,7 @@ const { unzipSync } = require('fflate');
 const SevenZip = require('7z-wasm');
 const { createExtractorFromData } = require('node-unrar-js');
 const { validateFilename } = require('./filename-validator');
+const { createVideoHtml } = require('./video-to-html');
 const { uploadDefault } = require('./plec');
 const { recordFiles, getStats, getCsvRows, toCsv, periodLabels } = require('./stats');
 
@@ -18,6 +19,7 @@ if (!SLACK_BOT_TOKEN || !SLACK_APP_TOKEN) {
 const allowedChannels = new Set((process.env.ALLOWED_CHANNEL_IDS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const app = new App({ token: SLACK_BOT_TOKEN, appToken: SLACK_APP_TOKEN, socketMode: true });
 const MAX_HTML_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_VIDEO_PAIR_BYTES = 3.4 * 1024 * 1024;
 const PERIOD_ALIASES = new Map([
   ['today', 'today'], ['day', 'today'], ['current-day', 'today'],
   ['week', 'week'], ['current-week', 'week'],
@@ -228,6 +230,54 @@ function validateHtmlContent(bytes) {
   return errors;
 }
 
+function collectVideoPairs(files) {
+  const groups = new Map();
+  const errors = [];
+
+  for (const file of files) {
+    const filename = file.name || 'unnamed file';
+    const match = filename.match(/^(.*)_(portrait|landscape)\.mp4$/i);
+    if (!match || !match[1]) {
+      errors.push(`\`${filename}\`: expected a valid HTML filename followed by _portrait.mp4 or _landscape.mp4.`);
+      continue;
+    }
+
+    const base = match[1];
+    const outputFilename = `${base}.html`;
+    const nameCheck = validateFilename(outputFilename);
+    if (!nameCheck.valid) {
+      errors.push(`\`${filename}\`: ${nameCheck.errors.join(' ')}`);
+      continue;
+    }
+
+    const key = base.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { base, outputFilename, portrait: null, landscape: null });
+    const group = groups.get(key);
+    const orientation = match[2].toLowerCase();
+    if (group[orientation]) {
+      errors.push(`\`${filename}\`: duplicate ${orientation} video for \`${base}\`.`);
+      continue;
+    }
+    group[orientation] = file;
+  }
+
+  for (const group of groups.values()) {
+    if (!group.portrait || !group.landscape) {
+      const missing = group.portrait ? 'landscape' : 'portrait';
+      errors.push(`\`${group.base}\`: missing the ${missing} video; each HTML needs one matching portrait and landscape MP4.`);
+      continue;
+    }
+
+    const declaredSize = Number(group.portrait.size || 0) + Number(group.landscape.size || 0);
+    if (declaredSize > MAX_VIDEO_PAIR_BYTES) {
+      errors.push(`\`${group.base}\`: the two videos total ${ (declaredSize / (1024 * 1024)).toFixed(2) } MB; the Video to HTML limit is 3.40 MB per pair.`);
+    }
+  }
+
+  if (files.length < 2) errors.push('At least two MP4 files are required to form a portrait/landscape pair.');
+  return { pairs: [...groups.values()].filter((group) => group.portrait && group.landscape), errors };
+}
+
 function addBirthdayMessage(text, date = new Date()) {
   const manilaDate = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
@@ -255,8 +305,22 @@ app.event('message', async ({ event, client, logger }) => {
     const fallback = `${new Date(editedAt * 1000).toISOString().replace('T', ' ').replace('Z', '')} UTC`;
     return `${text}\n\nRechecked after edit: <!date^${Math.floor(editedAt)}^{date_num} {time_secs}|${fallback}>`;
   };
-  const candidates = message.files.filter((file) => /\.(?:html?|zip|rar|7z)$/i.test(file.name || ''));
+  const candidates = message.files.filter((file) => /\.(?:html?|zip|rar|7z|mp4)$/i.test(file.name || ''));
   if (!candidates.length) return;
+  const videoFiles = candidates.filter((file) => /\.mp4$/i.test(file.name || ''));
+  let videoPairs = [];
+  if (videoFiles.length) {
+    const pairing = collectVideoPairs(videoFiles);
+    if (pairing.errors.length) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts,
+        text: addEditTimestamp(`Video filename issues:\n${pairing.errors.map((issue) => `- ${issue}`).join('\n')}\n\nFix the video filenames and upload one matching _portrait.mp4 and _landscape.mp4 for each HTML.`),
+      });
+      return;
+    }
+    videoPairs = pairing.pairs;
+  }
   const uploaderId = message.user || 'unknown';
   const uploaderDisplayName = await getUploaderName(client, uploaderId, message);
   const htmlFiles = [];
@@ -264,7 +328,9 @@ app.event('message', async ({ event, client, logger }) => {
   for (const file of candidates) {
     const filename = file.name || 'unnamed file';
     try {
-      if (/\.zip$/i.test(filename)) {
+      if (/\.mp4$/i.test(filename)) {
+        continue;
+      } else if (/\.zip$/i.test(filename)) {
         const zipBytes = await downloadSlackFile(file);
         htmlFiles.push(...extractHtmlFiles(zipBytes));
       } else if (/\.rar$/i.test(filename)) {
@@ -285,6 +351,30 @@ app.event('message', async ({ event, client, logger }) => {
       });
     }
   }
+  for (const pair of videoPairs) {
+    try {
+      const portraitBytes = await downloadSlackFile(pair.portrait, MAX_VIDEO_PAIR_BYTES);
+      const remainingBytes = MAX_VIDEO_PAIR_BYTES - portraitBytes.length;
+      if (remainingBytes <= 0) throw new Error('The portrait and landscape videos exceed the 3.40 MB pair limit.');
+      const landscapeBytes = await downloadSlackFile(pair.landscape, remainingBytes);
+      const bytes = portraitBytes.length + landscapeBytes.length;
+      if (bytes > MAX_VIDEO_PAIR_BYTES) throw new Error('The portrait and landscape videos exceed the 3.40 MB pair limit.');
+      htmlFiles.push({
+        filename: pair.outputFilename,
+        bytes: Buffer.from(createVideoHtml(
+          { filename: pair.portrait.name, bytes: portraitBytes },
+          { filename: pair.landscape.name, bytes: landscapeBytes },
+        ), 'utf8'),
+      });
+    } catch (error) {
+      logger.error(`Failed to convert ${pair.base}:`, error);
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts,
+        text: addEditTimestamp(`Could not convert video pair \`${pair.base}\`: ${error.message}`),
+      });
+    }
+  }
   if (!htmlFiles.length) return;
 
   const invalidFiles = [];
@@ -294,7 +384,10 @@ app.event('message', async ({ event, client, logger }) => {
   for (const { filename, bytes } of htmlFiles) {
     const check = validateFilename(filename);
     const contentErrors = validateHtmlContent(bytes);
-    const errors = [...check.errors, ...contentErrors];
+    const sizeErrors = bytes.length > MAX_HTML_FILE_BYTES
+      ? ['The HTML file exceeds the 5 MB limit.']
+      : [];
+    const errors = [...check.errors, ...contentErrors, ...sizeErrors];
     records.push({
       checked_at: new Date().toISOString(),
       uploader_id: uploaderId,
