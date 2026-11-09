@@ -331,6 +331,7 @@ app.event('message', async ({ event, client, logger }) => {
   const videoFiles = candidates.filter((file) => /\.mp4$/i.test(file.name || ''));
   const uploaderId = message.user || 'unknown';
   const htmlFiles = [];
+  const builtHtmlFiles = [];
 
   for (const file of candidates) {
     const filename = file.name || 'unnamed file';
@@ -391,13 +392,15 @@ app.event('message', async ({ event, client, logger }) => {
         : await downloadSlackFile(pair.landscape, remainingBytes);
       const bytes = portraitBytes.length + landscapeBytes.length;
       if (bytes > MAX_VIDEO_PAIR_BYTES) throw new Error('The portrait and landscape videos exceed the 3.40 MB pair limit.');
-      htmlFiles.push({
+      const builtHtml = {
         filename: pair.outputFilename,
         bytes: Buffer.from(createVideoHtml(
           { filename: pair.portrait.name, bytes: portraitBytes },
           { filename: pair.landscape.name, bytes: landscapeBytes },
         ), 'utf8'),
-      });
+      };
+      htmlFiles.push(builtHtml);
+      builtHtmlFiles.push(builtHtml);
     } catch (error) {
       logger.error(`Failed to convert ${pair.base}:`, error);
       await client.chat.postMessage({
@@ -485,6 +488,25 @@ app.event('message', async ({ event, client, logger }) => {
     thread_ts,
     text: addEditTimestamp(addBirthdayMessage(`<${link}|AppLovin>`)),
   });
+
+  for (const file of builtHtmlFiles) {
+    try {
+      await client.files.uploadV2({
+        channel_id: event.channel,
+        thread_ts,
+        file: file.bytes,
+        filename: file.filename,
+        title: file.filename,
+      });
+    } catch (error) {
+      logger.error(`Could not attach generated HTML ${file.filename}:`, error);
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts,
+        text: addEditTimestamp(`The PLEC upload succeeded, but I could not attach \`${file.filename}\` here: ${error.message}`),
+      });
+    }
+  }
 });
 
 (async () => {
