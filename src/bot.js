@@ -239,7 +239,7 @@ function validateHtmlContent(bytes) {
   const html = bytes.toString('utf8');
   const windowOpenPattern = /\bwindow\s*(?:(?:\?\.|\.)\s*open\b|\[\s*(["'`])open\1\s*\])/;
   const mraidOpenPattern = /\bmraid\s*\.\s*open\b/;
-  const reservedClickPattern = /(?<![\w$])(?:clickTag1|clickthrough)(?![\w$])/gi;
+  const reservedClickPattern = /(?<![\w$])(?:clickTag1|clickthrough|openClickthrough)(?![\w$])/gi;
   const errors = [];
 
   if (windowOpenPattern.test(html)) errors.push('Must not contain `window.open`.');
