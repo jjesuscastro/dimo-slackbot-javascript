@@ -239,11 +239,15 @@ function validateHtmlContent(bytes) {
   const html = bytes.toString('utf8');
   const windowOpenPattern = /\bwindow\s*(?:(?:\?\.|\.)\s*open\b|\[\s*(["'`])open\1\s*\])/;
   const mraidOpenPattern = /\bmraid\s*\.\s*open\b/;
+  const mraidAliasPattern = /\b(?:const|let|var)\s+mraid\s*=\s*window\s*\.\s*mraid\b/;
   const reservedClickPattern = /(?<![\w$])(?:clickTag1|clickthrough|openClickthrough)(?![\w$])/gi;
   const errors = [];
 
   if (windowOpenPattern.test(html)) errors.push('Must not contain `window.open`.');
   if (!mraidOpenPattern.test(html)) errors.push('Must contain `mraid.open`.');
+  if (mraidAliasPattern.test(html)) {
+    errors.push('Must not cache `window.mraid` in a local `mraid` variable; read `window.mraid` when calling `open` so the call uses the live bridge.');
+  }
   const reservedClickNames = [...new Set([...html.matchAll(reservedClickPattern)].map(([name]) => name))];
   if (reservedClickNames.length) {
     errors.push(`Rename reserved click identifier(s) ${reservedClickNames.join(', ')}. For click tracking, use the platform-injected \`window.clickTag\`.`);
